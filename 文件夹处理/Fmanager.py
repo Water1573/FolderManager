@@ -41,7 +41,7 @@ mode_radio1.grid(row=1, column=1, sticky="w")
 mode_radio2 = tk.Radiobutton(root, text="只显示二级子文件夹名", variable=mode_var, value=2)
 mode_radio2.grid(row=2, column=1, sticky="w")
 
-mode_radio3 = tk.Radiobutton(root, text="按树形结构动态展开", variable=mode_var, value=3)
+mode_radio3 = tk.Radiobutton(root, text="按树形结构动态展开（自动预加载）", variable=mode_var, value=3)
 mode_radio3.grid(row=3, column=1, sticky="w")
 
 # 确认按钮
@@ -135,44 +135,36 @@ def list_dirs(path, mode):
                 return os.path.join(path, level1, level2)
 
         elif mode == 3:
-            # 模式3：动态展开树形结构
+            # 模式3：树形结构，自动预加载所有子文件夹
             tree["columns"] = ("type")
-            tree.heading("#0", text="文件夹结构（点击 + 展开）")
+            tree.heading("#0", text="文件夹结构")
             tree.heading("type", text="类型")
             tree.column("type", anchor="center")
 
-            # 加载一级文件夹
-            level1_dirs = sorted([entry.name for entry in os.scandir(path) if entry.is_dir()])
-            for dir_name in level1_dirs:
-                dir_path = os.path.join(path, dir_name)
-                has_subdirs = any(entry.is_dir() for entry in os.scandir(dir_path))
-                item = tree.insert("", "end", text=dir_name, values=("文件夹"), open=False)
-                if has_subdirs:
-                    tree.insert(item, "end", text="加载中...")
-
-            # 定义展开事件
-            def on_tree_open(event):
-                item = tree.focus()
-                parent_path = get_full_path(item)
-                tree.delete(*tree.get_children(item))
+            # 递归加载文件夹结构的函数（自动预加载）
+            def load_tree(parent_item, parent_path):
                 try:
                     for entry in sorted(os.scandir(parent_path), key=lambda x: x.name):
                         if entry.is_dir():
-                            sub_path = os.path.join(parent_path, entry.name)
-                            has_subdirs = any(e.is_dir() for e in os.scandir(sub_path))
-                            sub_item = tree.insert(item, "end", text=entry.name, values=("文件夹"), open=False)
-                            if has_subdirs:
-                                tree.insert(sub_item, "end", text="加载中...")
+                            item = tree.insert(parent_item, "end", text=entry.name, values=("文件夹"), open=False)
+                            # 递归加载所有子目录
+                            load_tree(item, os.path.join(parent_path, entry.name))
                 except Exception as e:
-                    messagebox.showerror("错误", f"无法访问 {parent_path}: {e}")
+                    print(f"无法访问 {parent_path}: {e}")
 
-            tree.bind("<<TreeviewOpen>>", on_tree_open)
+            # 加载一级文件夹并递归加载所有子文件夹
+            level1_dirs = sorted([entry.name for entry in os.scandir(path) if entry.is_dir()])
+            for dir_name in level1_dirs:
+                dir_path = os.path.join(path, dir_name)
+                item = tree.insert("", "end", text=dir_name, values=("文件夹"), open=False)
+                load_tree(item, dir_path)
 
             # 获取完整路径
             def get_full_path(item):
                 path_parts = []
                 while item:
-                    path_parts.append(tree.item(item, "text"))
+                    text = tree.item(item, "text")
+                    path_parts.append(text)
                     item = tree.parent(item)
                 return os.path.join(path, *reversed(path_parts))
 
@@ -200,37 +192,34 @@ def list_dirs(path, mode):
         selected_count_label = tk.Label(result_window, text="已选择 0 个文件夹")
         selected_count_label.pack(pady=5)
 
-        def update_selected_count(event):
+        def update_selected_count(event=None):
             selected_count = len(tree.selection())
             selected_count_label.config(text=f"已选择 {selected_count} 个文件夹")
 
         tree.bind("<<TreeviewSelect>>", update_selected_count)
 
-        # 获取所有子文件夹的辅助函数
-        def get_all_subfolders(item):
-            subfolders = []
-            for child in tree.get_children(item):
-                subfolders.append(child)
-                subfolders.extend(get_all_subfolders(child))  # 递归获取所有子文件夹
-            return subfolders
+        # 获取下一级子文件夹的辅助函数
+        def get_next_level_subfolders(item):
+            return [child for child in tree.get_children(item)]
 
-        # 右键点击事件：选择或取消选择子文件夹
+        # 右键点击事件：选择或取消选择下一级子文件夹
         def on_right_click(event):
             item = tree.identify_row(event.y)  # 获取右键点击的项
             if item:
-                subfolders = get_all_subfolders(item)  # 获取所有子文件夹
-                if subfolders:
-                    # 检查子文件夹是否已被选中
-                    if any(child in tree.selection() for child in subfolders):
-                        # 如果有任意子文件夹被选中，则取消选中所有子文件夹
-                        for child in subfolders:
-                            tree.selection_remove(child)
-                    else:
-                        # 否则，选中所有子文件夹
-                        for child in subfolders:
-                            tree.selection_add(child)
+                # 如果右键点击的文件夹已被选中，则取消选择该文件夹
+                if item in tree.selection():
+                    tree.selection_remove(item)
+                else:
+                    # 获取下一级子文件夹
+                    next_level_subfolders = get_next_level_subfolders(item)
+                    if next_level_subfolders:
+                        # 如果下一级子文件夹中有任意已被选中，则不执行任何操作
+                        # 否则，选中所有下一级子文件夹
+                        if not any(child in tree.selection() for child in next_level_subfolders):
+                            for child in next_level_subfolders:
+                                tree.selection_add(child)
                 # 更新选中数量
-                update_selected_count(None)
+                update_selected_count()
 
         # 绑定右键点击事件
         tree.bind("<Button-3>", on_right_click)
